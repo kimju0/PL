@@ -2,16 +2,51 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <ctype.h>
+#include <cstring>
+#include <string>
+#include <algorithm>
+#include <vector>
 
-/* Global declarations */
-/* Variables */
-int charClass;
+using namespace std;
+
+enum CharClass
+{
+    CC_END = -1,
+	LETTER,
+	DIGIT,
+	UNKNOWN
+};
+enum TokenCodes
+{
+    TC_END = -1,
+    CONST,
+    IDENTIFIER,
+    ASSIGNMENT,
+    SEMICOLON,
+    ADDOP,
+    SUBOP,
+    MULTOP,
+    DIVOP,
+    LEFTPAREN,
+    RIGHTPAREN,
+};
+string tokenName[] = { "EOF", "CONST", "IDENTIFIER", "ASSIGNMENT", "SEMICOLON", "ADDOP", "SUBOP", "MULTOP", "DIVOP", "LEFTPAREN", "RIGHTPAREN" };
+
+CharClass charClass;
 char lexeme[100];
 char nextChar;
 int lexLen;
 int token;
-int nextToken;
+TokenCodes nextToken;
 FILE* in_fp, * fopen();
+
+bool compile_option_v = false;
+
+//Parser
+string input;//main함수 안에도 있음
+bool error_flag = false;
+vector<pair<string, int>> ident;
+
 
 /* Function declarations */
 void addChar();
@@ -19,81 +54,82 @@ void getChar();
 void getNonBlank();
 int lex();
 
-/* Character classes */
-#define LETTER 0
-#define DIGIT 1
-#define UNKNOWN 99
+void parser();
 
-/* Token codes */
-#define INT_LIT 10
-#define IDENT 11
-#define ASSIGN_OP 20
-#define ADD_OP 21
-#define SUB_OP 22
-#define MULT_OP 23
-#define DIV_OP 24
-#define LEFT_PAREN 25
-#define RIGHT_PAREN 26
+int find_ident(string);
 
-/******************************************************/
-/* main driver */
 
 int main(int argc, char** argv) {
-    printf("Starting ..... \n");
-
-    /* Open the input data file and process its contents */
+    string input=argv[1];
+    int index;
+    
+    if (index=input.find("-v")!= string::npos ) {
+        input.substr(0, index);
+        compile_option_v=true;
+    }
+    
     if ((in_fp = fopen(argv[1], "r")) == NULL) {
-        printf("ERROR");
+        printf("ERROR_fopen");
     }
     else {
+        parser();
+        /*
         getChar();
         do {
             lex();
         } while (nextToken != EOF);
+        */
     }
+    
     return 0;
 }
 
-
-/*****************************************************/
-/* lookup - a function to lookup operators and parentheses and return the token */
+//연산자 및 괄호를 lookup하여 token을 반환
 int lookup(char ch) {
     switch (ch) {
+    //예외처리 ':='가 되야함
+    case '=':
+		addChar();
+		nextToken = ASSIGNMENT;
+		break;
+    case ';':
+		addChar();
+		nextToken = SEMICOLON;
+		break;
     case '(':
         addChar();
-        nextToken = LEFT_PAREN;
+        nextToken = LEFTPAREN;
         break;
     case ')':
         addChar();
-        nextToken = RIGHT_PAREN;
+        nextToken = RIGHTPAREN;
         break;
     case '+':
         addChar();
-        nextToken = ADD_OP;
+        nextToken = ADDOP;
         break;
     case '-':
         addChar();
-        nextToken = SUB_OP;
+        nextToken = SUBOP;
         break;
     case '*':
         addChar();
-        nextToken = MULT_OP;
+        nextToken = MULTOP;
         break;
     case '/':
         addChar();
-        nextToken = DIV_OP;
+        nextToken = DIVOP;
         break;
 
     default:
         addChar();
-        nextToken = EOF;
+        nextToken = TC_END;
         break;
     }
     return nextToken;
 }
 
-/*****************************************************/
-/* addChar - a function to add nextChar to lexeme */
+//lexeme에 nextChar 추가
 void addChar() {
     if (lexLen <= 98) {
         lexeme[lexLen++] = nextChar;
@@ -101,11 +137,11 @@ void addChar() {
     }
 }
 
-/*****************************************************/
-/* getChar - a function to get the next character of
-input and determine its character class */
+//문자 하나 nextChar에 가져와서 charClass에 저장
 void getChar() {
     if ((nextChar = getc(in_fp)) != EOF) {
+        input.push_back(nextChar);
+        //printf("%s\n", input.c_str());
         if (isalpha(nextChar))
             charClass = LETTER;
         else if (isdigit(nextChar))
@@ -113,21 +149,17 @@ void getChar() {
         else charClass = UNKNOWN;
     }
     else
-        charClass = EOF;
+        charClass = CC_END;
 }
 
-
-/*****************************************************/
-/* getNonBlank - a function to call getChar until it
-returns a non-whitespace character */
+//nextChar가 공백이 아닐 때까지 getChar() 호출
 void getNonBlank() {
     while (isspace(nextChar)) {
         getChar();
     }
 }
 
-/*****************************************************/
-/* lex - a simple lexical analyzer for arithmetic expressions */
+//lexeme을 읽어서 token을 반환
 int lex() {
     lexLen = 0;
     getNonBlank();
@@ -141,7 +173,11 @@ int lex() {
             addChar();
             getChar();
         }
-        nextToken = IDENT;
+        nextToken = IDENTIFIER;
+
+        if (find_ident(string(lexeme)) != -1) {
+			ident.push_back(make_pair(string(lexeme), 0));
+        }
         break;
 
         /* Parse integer literals */
@@ -152,35 +188,44 @@ int lex() {
             addChar();
             getChar();
         }
-        nextToken = INT_LIT;
+        nextToken = CONST;
         break;
 
         /* Parentheses and operators */
     case UNKNOWN:
+        if (nextChar == ':') {
+            addChar();
+            getChar();
+        }
         lookup(nextChar);
         getChar();
         break;
 
         /* EOF */
     case EOF:
-        nextToken = EOF;
+        nextToken = TC_END;
         lexeme[0] = 'E';
         lexeme[1] = 'O';
         lexeme[2] = 'F';
         lexeme[3] = 0;
         break;
-    } /* End of switch */
-    printf("Next Token is : %d, Next lexeme is %s\n", nextToken, lexeme);
+    }
+    if (compile_option_v)
+        printf("Next Token : %s\nNext lexeme : %s\n\n", tokenName[nextToken+1].c_str(), lexeme);
     return nextToken;
-} /* End of function lex */
+}
 
+int find_ident(string target) {
+    nextToken = IDENTIFIER;
+    for (auto i = 0; i < ident.size(); i++) {
+        if (ident[i].first == string(lexeme)) {
+            return i;
+        }
+    }
+    return -1;
+}
 
-
-
-//----------------------------------------------
-//parser
-#define SEMICOLON 27//lexical analyzer에 추가
-
+//PARSER
 void program();
 void statements();
 void statement();
@@ -189,36 +234,45 @@ void term_tail();
 void term();
 void factor_tail();
 void factor();
-void error();
+void error(int debug);
 
 
-void error() {
-	printf("Error");
-    //무슨 에러인지 출력
+void error(int debug) {
+	printf("Error:%d\n",debug);
+    error_flag = true;
 }
+
 void program() {
     statements();
 }
+
 void statements() {
     statement();
+    printf("%s", input.c_str());
+    printf("ID: %d; CONST: %d; OP: %d;\n",0,0,0);
+    printf(
+        error_flag ? "(Error)\n" : "(OK)\n"
+    );
     if (nextToken == SEMICOLON) {
+        input = "";
+        error_flag = false;
 		lex();
 		statements();
 	}
 }
 void statement() {
-    if (nextToken == IDENT) {
+    if (nextToken == IDENTIFIER) {
 		lex();
-        if (nextToken == ASSIGN_OP) {
+        if (nextToken == ASSIGNMENT) {
 			lex();
 			expression();
 		}
         else {
-			error();
+			error(1);
 		}
 	}
     else {
-		error();
+		error(1);
 	}
 }
 void expression() {
@@ -226,7 +280,7 @@ void expression() {
 	term_tail();
 }
 void term_tail() {
-    if (nextToken == ADD_OP || nextToken == SUB_OP) {
+    if (nextToken == ADDOP || nextToken == SUBOP) {
 		lex();
 		term();
 		term_tail();
@@ -236,10 +290,9 @@ void term_tail() {
 void term() {
 	factor();
 	factor_tail();
-
 }
 void factor_tail() {
-    if (nextToken == MULT_OP || nextToken == DIV_OP) {
+    if (nextToken == MULTOP || nextToken == DIVOP) {
 		lex();
 		factor();
 		factor_tail();
@@ -247,86 +300,36 @@ void factor_tail() {
 	//lambda인 경우 PASS 다시 생각해보기
 }
 void factor() {
-    if (nextToken == IDENT || nextToken == INT_LIT) {
+    if (nextToken == IDENTIFIER || nextToken == CONST) {
 		lex();
 	}
-    else if (nextToken == LEFT_PAREN) {
+    else if (nextToken == LEFTPAREN) {
 		lex();
 		expression();
-        if (nextToken == RIGHT_PAREN) {
+        if (nextToken == RIGHTPAREN) {
 			lex();
 		}
         else {
-			error();
+			error(2);
 		}
 	}
     else {
-		error();
+		error(2);
 	}
 }
-
-
-////parser
-///*
-//GRAMMAR
-//<expr> ® <term> {(+| -) < term > }
-//<term> ® <factor> {(*| /) < factor > }
-//<factor> ® id | int_constant | (<expr>)
-//*/
-//
-///* Function expr
-//Parses strings in the language
-//generated by the rule:
-//<expr> → <term> {(+ | -) <term>}
-//*/
-//void expr() {
-//    /* Parse the first term */
-//    term();
-//    /* As long as the next token is + or -, call
-//    lex to get the next token and parse the
-//    next term */
-//    while (nextToken == ADD_OP ||
-//        nextToken == SUB_OP) {
-//        lex();
-//        term();
-//    }
-//} /* End of function expr */
-//
-///* Function term
-//Parses strings in the language
-//generated by the rule:
-//<term> -> <factor> {(* | /) <factor>)
-//*/
-//void term() {
-//    /* Parse the first factor */
-//    factor();
-//    /* As long as the next token is * or /,
-//    next token and parse the next factor */
-//    while (nextToken == MULT_OP || nextToken == DIV_OP) {
-//        lex();
-//        factor();
-//    }
-//} /* End of function term */
-//
-///* Function factor
-//Parses strings in the language
-//generated by the rule:
-//<factor> -> id | (<expr>) 
-//*/
-//void factor() {
-//    /* Determine which RHS */
-//    if (nextToken == ID_CODE || nextToken == INT_CODE)
-//    /* For the RHS id, just call lex */
-//        lex();
-//    /* If the RHS is (<expr>) ? call lex to pass over the left parenthesis,
-//    call expr, and check for the right parenthesis */
-//    else if (nextToken == LP_CODE) {
-//        lex();
-//        expr();
-//        if (nextToken == RP_CODE)
-//            lex();
-//        else
-//            error();
-//    } /* End of else if (nextToken == ... */
-//    else error(); /* Neither RHS matches */
-//}
+void parser() {
+    getChar();
+    lex();
+	program();
+    printf("Result ==> ");
+    for (int i = 0; i < ident.size(); i++) {
+        printf("%s = %d ",ident[i].first,ident[i].second);
+    }
+    printf("\n");
+    if (nextToken == TC_END) {
+		printf("Parsing Complete\n");
+	}
+    else {
+		error(3);
+	}
+}
