@@ -10,6 +10,9 @@
 
 using namespace std;
 
+bool compile_option_v = false;
+
+//data type
 enum CharClass
 {
     CC_END = -1,
@@ -31,9 +34,23 @@ enum TokenCodes
     LEFTPAREN,
     RIGHTPAREN,
 };
-string tokenName[] = { "EOF", "CONST", "IDENTIFIER", "ASSIGNMENT", "SEMICOLON", "ADDOP", "SUBOP", "MULTOP", "DIVOP", "LEFTPAREN", "RIGHTPAREN" };
+string tokenName[] = { 
+    "EOF", "CONST", "IDENTIFIER", "ASSIGNMENT", "SEMICOLON", "ADDOP", "SUBOP", "MULTOP", "DIVOP", "LEFTPAREN", "RIGHTPAREN" 
+};
+enum ERROR_CODE {
+    NO_ERROR,
+    no_declaration,
+    not_enough_elements,
+    wrong_parenthesis
+};
+string errorstring[] = {
+    string("\"NO error\""),
+    string("\"정의되지 않은 변수가 참조됨\""),
+    string("\"식의 요소가 부족함\""),
+    string("\"올바르지 않은 괄호쌍\"")
+};
 
-//Lexical Analyzer
+//Lexical Analyzer-Global Variables
 CharClass charClass;
 char lexeme[100];
 char nextChar;
@@ -42,26 +59,41 @@ int token;
 TokenCodes nextToken;
 FILE* in_fp, * fopen();
 
-bool compile_option_v = false;
-
-//Parser
-string input;//main함수 안에도 있음
-bool error_flag = false;
-vector<pair<string, int>> ident;
-int n_ID, n_CONST, n_OP;
-string target_equation;
-int n_paren;
-string LeftTerm;
-int res_RightTerm;
-
+//Lexical Analyzer-Function Declaration
 void addChar();
 void getChar();
 void getNonBlank();
 int lex();
 void parser();
-
 int find_ident(string);
+void push_ident(string, int);
 
+//Parser-data type
+string input;//main함수 안에도 있음
+bool global_error_flag = false;
+int error_flag = 0;
+vector<pair<string, int>> ident;
+int n_ID, n_CONST, n_OP;
+string target_equation;
+int n_close_paren, n_open_paren;
+string LeftTerm;
+int res_RightTerm;
+
+//Parser-Function Declaration
+void program();
+void statements();
+void statement();
+void expression();
+void term_tail();
+void term();
+void factor_tail();
+void factor();
+void error(int debug);
+int operate();//선언되지 않은 식별자 유무 반환
+
+//DEFINITION OF FUNCTION
+//*********************************************************************************
+//*********************************************************************************
 
 int main(int argc, char** argv) {
     string input=string(argv[1]);
@@ -103,10 +135,12 @@ int lookup(char ch) {
     case '(':
         addChar();
         nextToken = LEFTPAREN;
+        n_open_paren++;
         break;
     case ')':
         addChar();
         nextToken = RIGHTPAREN;
+        n_close_paren++;
         break;
     case '+':
         addChar();
@@ -162,7 +196,7 @@ void getChar() {
 
 //nextChar가 공백이 아닐 때까지 getChar() 호출
 void getNonBlank() {
-    while (isspace(nextChar)) {
+    while (nextChar <= 32&&nextChar>=0) {
         getChar();
     }
 }
@@ -183,7 +217,6 @@ int lex() {
             getChar();
         }
         nextToken = IDENTIFIER;
-
         break;
 
         /* Parse integer literals */
@@ -233,44 +266,37 @@ int find_ident(string target) {
     return -1;
 }
 
-//PARSER
-void program();
-void statements();
-void statement();
-void expression();
-void term_tail();
-void term();
-void factor_tail();
-void factor();
-void error(int debug);
-bool operate();//선언되지 않은 식별자 유무 반환
-
-enum ERROR_CODE {
-    no_declaration,
-};
+void push_ident(string target, int value) {
+    int ind=find_ident(target);
+	if(ind==-1)ident.push_back(make_pair(target, value));
+	else ident[ind].second = value;
+}
 
 void error(int debug) {
-	printf("Error:%d\n",debug);
-    error_flag = true;
+	//printf("Error:%d\n",debug);
+    global_error_flag = true;
+    error_flag = debug;
 }
 
 void program() {
     statements();
 }
 void statements() {
+    error_flag = false;
     statement();
+    if (input.find("\n") != string::npos)
+        input=input.substr(0, input.find("\n"));
     if (!compile_option_v)
-        printf("%s", input.c_str());
+        printf("%s\n", input.c_str());
     if (!compile_option_v)
         printf("ID: %d; CONST: %d; OP: %d;\n", n_ID, n_CONST, n_OP);
     n_ID = 0, n_CONST = 0, n_OP = 0;
-    if (!compile_option_v)
-        printf(
-            error_flag ? "(Error)\n" : "(OK)\n"
-        );
+    if (!compile_option_v) {
+        if (error_flag)printf("(Error) %s\n", errorstring[error_flag].c_str());
+        else printf("(OK)\n");
+    }
     if (nextToken == SEMICOLON) {
         input = "";
-        error_flag = false;
         lex();
         statements();
     }
@@ -282,13 +308,17 @@ void statement() {
         if (nextToken == ASSIGNMENT) {
             target_equation = string("");
             res_RightTerm = 0;
+            n_close_paren = 0, n_open_paren = 0;
 			lex();
 			expression();
             //printf("\n\n%s\n\n", target_equation.c_str());//debug
-            if(operate())
-                ident.push_back(make_pair(LeftTerm, res_RightTerm));
+            int code;
+            if ((code = operate()) == 0)
+                push_ident(LeftTerm, res_RightTerm);
+
             else {
-				error(no_declaration);
+				error(code);
+				push_ident(LeftTerm, 0);
 			}
 		}
         else {
@@ -358,21 +388,33 @@ string actual_operate(string target) {//단순 연산
         for(int j=0;j<tokens.size();j++)
             if (tokens[j] == "*" || tokens[j] == "/") {
                 int a,b;
-                if(isdigit(tokens[j - 1].front()))
-                    a= stoi(tokens[j - 1]);
+                if (isdigit(tokens[j - 1].front()))
+                    a = stoi(tokens[j - 1]);
                 else
-                    a=ident[find_ident(tokens[j - 1])].second;
+                    if (find_ident(tokens[j - 1]) == -1) {
+                        error(no_declaration);
+                        push_ident(tokens[j - 1], 0);
+                        a = 0;
+                    }
+                    else
+                        a=ident[find_ident(tokens[j - 1])].second;
                 
                 if (isdigit(tokens[j + 1].front()))
                     b = stoi(tokens[j + 1]);
                 else
-                    b = ident[find_ident(tokens[j + 1])].second;
+                    if (find_ident(tokens[j + 1]) == -1) {
+                        error(no_declaration);
+                        push_ident(tokens[j + 1], 0);
+                        b = 0;
+                    }
+                    else
+                        b = ident[find_ident(tokens[j + 1])].second;
 				
                 int res;
 				if (tokens[j] == "*")
 					res = a * b;
 				else
-					res = a / b;
+					res = (b==0)?0:a/b;
 				tokens[j - 1] = to_string(res);
 				tokens.erase(tokens.begin() + j);
 				tokens.erase(tokens.begin() + j);
@@ -386,12 +428,24 @@ string actual_operate(string target) {//단순 연산
                 if (isdigit(tokens[j - 1].front()))
                     a = stoi(tokens[j - 1]);
                 else
-                    a = ident[find_ident(tokens[j - 1])].second;
+                    if (find_ident(tokens[j - 1]) == -1) {
+                        error(no_declaration);
+                        push_ident(tokens[j - 1], 0);
+                        a = 0;
+                    }
+                    else
+                        a = ident[find_ident(tokens[j - 1])].second;
 
                 if (isdigit(tokens[j + 1].front()))
                     b = stoi(tokens[j + 1]);
                 else
-                    b = ident[find_ident(tokens[j + 1])].second;
+                    if (find_ident(tokens[j + 1]) == -1) {
+                        push_ident(tokens[j + 1], 0);
+                        error(no_declaration);
+                        b = 0;
+                    }
+                    else
+                        b = ident[find_ident(tokens[j + 1])].second;
                 int res;
                 if (tokens[j] == "+")
                     res = a + b;
@@ -405,22 +459,25 @@ string actual_operate(string target) {//단순 연산
     }
     return tokens.front();
 }
-bool operate() {//괄호 처리
+int operate() {//괄호 처리
+    if (n_OP + 1 != n_ID-1+n_CONST)return 2;
+    if(n_open_paren!=n_close_paren)return 3;
     if(target_equation.find(";")!=string::npos)
         target_equation=target_equation.substr(0, target_equation.find(";") );
-    for (int i = 0; i < n_paren; i++) {//괄호 개수만큼 반복
-        int start_paren=0;
-        for (int j = 0; j < target_equation.size(); i++) {
+    for (int i = 0; i < n_close_paren; i++) {//괄호 개수만큼 반복
+        int start_paren=-1;
+        for (int j = 0; j < target_equation.size(); j++) {
             if (target_equation[j] == '(')
                 start_paren = j;
             else if (target_equation[j] == ')') {
+                if(start_paren==-1)return 3;//닫는 괄호가 먼저 나오는 case
                 string replace = actual_operate(target_equation.substr(start_paren + 1, j - start_paren - 1));
                 target_equation.replace(start_paren, j - start_paren + 1, replace);
             }
         }
     }
     res_RightTerm= stoi(actual_operate(target_equation));
-	return true;
+	return 0;
 }
 
 void parser() {
@@ -430,8 +487,15 @@ void parser() {
     if(!compile_option_v)
         printf("Result ==> ");
     if (!compile_option_v)
-        for (int i = 0; i < ident.size(); i++) {
-            printf("%s: %d; ",ident[i].first.c_str(), ident[i].second);
+        if (global_error_flag) {
+            for (int i = 0; i < ident.size(); i++) {
+                printf("%s: Unknown; ", ident[i].first.c_str());
+            }
+        }
+        else {
+            for (int i = 0; i < ident.size(); i++) {
+                printf("%s: %d; ", ident[i].first.c_str(), ident[i].second);
+            }
         }
     if (!compile_option_v)
         printf("\n");

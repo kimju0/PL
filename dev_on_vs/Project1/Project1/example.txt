@@ -1,2 +1,2 @@
-operand1 := 1;
-operand2 := (operand1 * 3) + 2 ; target := operand1 + operand2 * 3
+target := ( ( 1 * 2) + 3 ) + 4;
+target := 5
