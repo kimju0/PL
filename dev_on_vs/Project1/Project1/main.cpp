@@ -68,8 +68,8 @@ void parser();
 int find_ident(string);
 void push_ident(string, int);
 
-//Parser-data type
-string input;//main함수 안에도 있음
+//Parser-Global Variables
+string input;
 bool global_error_flag = false;
 int error_flag = 0;
 vector<pair<string, int>> ident;
@@ -98,23 +98,14 @@ int operate();//선언되지 않은 식별자 유무 반환
 int main(int argc, char** argv) {
     string input=string(argv[1]);
     int index;
-    
-    if ((index=input.find(string("-v")))!= string::npos ) {
-        input=input.substr(0, index);
-        compile_option_v=true;
-    }
+
+    if(argc==3&&string(argv[2])=="-v")compile_option_v = true;
     
     if ((in_fp = fopen(input.c_str(), "r")) == NULL) {
         printf("ERROR_fopen");
     }
     else {
         parser();
-        /*
-        getChar();
-        do {
-            lex();
-        } while (nextToken != EOF);
-        */
     }
     
     return 0;
@@ -123,7 +114,6 @@ int main(int argc, char** argv) {
 //연산자 및 괄호를 lookup하여 token을 반환
 int lookup(char ch) {
     switch (ch) {
-    //예외처리 ':='가 되야함
     case '=':
 		addChar();
 		nextToken = ASSIGNMENT;
@@ -339,7 +329,6 @@ void term_tail() {
 		term();
 		term_tail();
 	}
-    //lambda인 경우 PASS 다시 생각해보기
 }
 void term() {
 	factor();
@@ -351,7 +340,6 @@ void factor_tail() {
 		factor();
 		factor_tail();
 	}
-	//lambda인 경우 PASS 다시 생각해보기
 }
 void factor() {
     if (nextToken == IDENTIFIER || nextToken == CONST) {
